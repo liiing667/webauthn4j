@@ -23,13 +23,24 @@ import com.webauthn4j.util.AssertUtil;
 import com.webauthn4j.util.Base64UrlUtil;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import tools.jackson.core.JacksonException;
+import tools.jackson.core.JsonParser;
+import tools.jackson.core.JsonToken;
 
 import java.nio.charset.StandardCharsets;
+import java.util.HashSet;
+import java.util.Set;
 
 /**
  * Converter for {@link CollectedClientData}
  */
 public class CollectedClientDataConverter {
+
+    // Security-critical top-level members of clientDataJSON.
+    // If any of these members appears more than once in the same JSON object, the document is ambiguous:
+    // a JSON parser silently keeps only one of the values, so the value used for the security decision
+    // and the value observed when auditing the raw document may not be the same member.
+    private static final Set<String> SECURITY_CRITICAL_MEMBERS = Set.of("type", "challenge", "origin");
 
     //~ Instance fields
     // ================================================================================================
@@ -73,9 +84,51 @@ public class CollectedClientDataConverter {
         try {
             AssertUtil.notNull(source, "source must not be null");
             String jsonString = new String(source, StandardCharsets.UTF_8);
+            assertNoDuplicateSecurityCriticalMembers(jsonString);
             return objectConverter.getJsonMapper().readValue(jsonString, CollectedClientData.class);
         } catch (IllegalArgumentException e) {
             throw new DataConversionException(e);
+        }
+    }
+
+    /**
+     * Scans the top-level members of the clientDataJSON document and rejects it if any
+     * security-critical member ({@code type}, {@code challenge} or {@code origin}) appears
+     * more than once. Member names are compared after JSON escape decoding, so escaped
+     * variants of the same member name are treated as the same member.
+     *
+     * @param jsonString the raw clientDataJSON document
+     * @throws DataConversionException if a security-critical member is duplicated
+     */
+    private void assertNoDuplicateSecurityCriticalMembers(@NotNull String jsonString) {
+        try (JsonParser parser = objectConverter.getJsonMapper().createParser(jsonString)) {
+            if (parser.nextToken() != JsonToken.START_OBJECT) {
+                // Not a JSON object; let the databind deserialization report the problem.
+                return;
+            }
+            Set<String> seenSecurityCriticalMembers = new HashSet<>();
+            while (true) {
+                JsonToken token = parser.nextToken();
+                if (token == null || token == JsonToken.END_OBJECT) {
+                    return;
+                }
+                if (token != JsonToken.PROPERTY_NAME) {
+                    // Unexpected structure; leave error handling to the databind deserialization.
+                    return;
+                }
+                String memberName = parser.currentName();
+                if (SECURITY_CRITICAL_MEMBERS.contains(memberName) && !seenSecurityCriticalMembers.add(memberName)) {
+                    throw new DataConversionException(
+                            "clientDataJSON contains a duplicate '" + memberName + "' member. " +
+                                    "clientDataJSON documents with repeated type, challenge or origin members are ambiguous and rejected.");
+                }
+                JsonToken valueToken = parser.nextToken();
+                if (valueToken != null && valueToken.isStructStart()) {
+                    parser.skipChildren();
+                }
+            }
+        } catch (JacksonException e) {
+            // Malformed JSON; let the databind deserialization raise a proper DataConversionException.
         }
     }
 

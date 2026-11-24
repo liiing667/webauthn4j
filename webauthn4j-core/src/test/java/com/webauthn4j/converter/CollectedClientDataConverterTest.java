@@ -164,5 +164,103 @@ class CollectedClientDataConverterTest {
                             .isInstanceOf(DataConversionException.class)
             );
         }
+
+        @Test
+        void shouldRejectDuplicateTypeMember() {
+            // Given
+            String json = "{\"type\":\"webauthn.get\",\"challenge\":\"tk31UH1ETGGTPj33OhOMzw\",\"origin\":\"http://localhost:8080\",\"type\":\"webauthn.create\"}";
+
+            // When/Then
+            assertAll(
+                    () -> assertThatThrownBy(() -> target.convert(json.getBytes(StandardCharsets.UTF_8)))
+                            .isInstanceOf(DataConversionException.class),
+                    () -> assertThatThrownBy(() -> target.convert(Base64UrlUtil.encodeToString(json.getBytes(StandardCharsets.UTF_8))))
+                            .isInstanceOf(DataConversionException.class)
+            );
+        }
+
+        @Test
+        void shouldRejectDuplicateChallengeMember() {
+            // Given
+            String json = "{\"type\":\"webauthn.get\",\"challenge\":\"tk31UH1ETGGTPj33OhOMzw\",\"origin\":\"http://localhost:8080\",\"challenge\":\"AAAAAAAAAAAAAAAAAAAAAA\"}";
+
+            // When/Then
+            assertThatThrownBy(() -> target.convert(json.getBytes(StandardCharsets.UTF_8)))
+                    .isInstanceOf(DataConversionException.class);
+        }
+
+        @Test
+        void shouldRejectDuplicateOriginMember() {
+            // Given
+            String json = "{\"type\":\"webauthn.get\",\"challenge\":\"tk31UH1ETGGTPj33OhOMzw\",\"origin\":\"http://localhost:8080\",\"origin\":\"https://evil.example\"}";
+
+            // When/Then
+            assertThatThrownBy(() -> target.convert(json.getBytes(StandardCharsets.UTF_8)))
+                    .isInstanceOf(DataConversionException.class);
+        }
+
+        @Test
+        void shouldRejectDuplicateMemberWithEscapedName() {
+            // Given: "challeng\u0065" is the escape-equivalent of "challenge"
+            String json = "{\"type\":\"webauthn.get\",\"challeng\\u0065\":\"tk31UH1ETGGTPj33OhOMzw\",\"origin\":\"http://localhost:8080\",\"challenge\":\"AAAAAAAAAAAAAAAAAAAAAA\"}";
+
+            // When/Then
+            assertThatThrownBy(() -> target.convert(json.getBytes(StandardCharsets.UTF_8)))
+                    .isInstanceOf(DataConversionException.class);
+        }
+
+        @Test
+        void shouldRejectDuplicateMemberEvenWhenValuesAreEqual() {
+            // Given
+            String json = "{\"type\":\"webauthn.get\",\"challenge\":\"tk31UH1ETGGTPj33OhOMzw\",\"origin\":\"http://localhost:8080\",\"origin\":\"http://localhost:8080\"}";
+
+            // When/Then
+            assertThatThrownBy(() -> target.convert(json.getBytes(StandardCharsets.UTF_8)))
+                    .isInstanceOf(DataConversionException.class);
+        }
+
+        @Test
+        void shouldAcceptEscapedButNonDuplicateMembers() {
+            // Given: escaped member names and values that decode to distinct, ordinary members
+            String json = "{\"\\u0074ype\":\"webauthn.get\",\"challeng\\u0065\":\"tk31UH1ETGGTPj33OhOMzw\",\"origin\":\"http://localhost:8080\"}";
+
+            // When
+            CollectedClientData collectedClientData = target.convert(json.getBytes(StandardCharsets.UTF_8));
+
+            // Then
+            assertAll(
+                    () -> assertThat(collectedClientData.getType()).isEqualTo(ClientDataType.WEBAUTHN_GET),
+                    () -> assertThat(collectedClientData.getChallenge()).isEqualTo(new DefaultChallenge("tk31UH1ETGGTPj33OhOMzw")),
+                    () -> assertThat(collectedClientData.getOrigin()).isEqualTo(new Origin("http://localhost:8080"))
+            );
+        }
+
+        @Test
+        void shouldAcceptOriginWithDefaultPort() {
+            // Given
+            String json = "{\"type\":\"webauthn.get\",\"challenge\":\"tk31UH1ETGGTPj33OhOMzw\",\"origin\":\"https://example.com:443\"}";
+
+            // When
+            CollectedClientData collectedClientData = target.convert(json.getBytes(StandardCharsets.UTF_8));
+
+            // Then
+            assertThat(collectedClientData.getOrigin()).isEqualTo(new Origin("https://example.com:443"));
+        }
+
+        @Test
+        void shouldAcceptMembersInAnyOrder() {
+            // Given
+            String json = "{\"origin\":\"http://localhost:8080\",\"crossOrigin\":false,\"challenge\":\"tk31UH1ETGGTPj33OhOMzw\",\"type\":\"webauthn.get\"}";
+
+            // When
+            CollectedClientData collectedClientData = target.convert(json.getBytes(StandardCharsets.UTF_8));
+
+            // Then
+            assertAll(
+                    () -> assertThat(collectedClientData.getType()).isEqualTo(ClientDataType.WEBAUTHN_GET),
+                    () -> assertThat(collectedClientData.getChallenge()).isEqualTo(new DefaultChallenge("tk31UH1ETGGTPj33OhOMzw")),
+                    () -> assertThat(collectedClientData.getOrigin()).isEqualTo(new Origin("http://localhost:8080"))
+            );
+        }
     }
 }
