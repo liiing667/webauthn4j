@@ -11,6 +11,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertAll;
 
 class CoreCredentialRecordImplTest {
@@ -113,5 +114,104 @@ class CoreCredentialRecordImplTest {
         assertThat(instanceA)
                 .isEqualTo(instanceB)
                 .hasSameHashCodeAs(instanceB);
+    }
+
+    @Test
+    void shouldRejectBackupStateThatContradictsBackupEligibilityOnConstruction() {
+        assertThatThrownBy(() -> new CoreCredentialRecordImpl(
+                attestationStatement,
+                flagUV,
+                false,
+                true,
+                signCount,
+                attestedCredentialData,
+                extensions
+        )).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void shouldAllowNullBackupStateForLegacyRecords() {
+        CoreCredentialRecord coreCredentialRecord = new CoreCredentialRecordImpl(
+                attestationStatement,
+                null,
+                null,
+                null,
+                signCount,
+                attestedCredentialData,
+                extensions
+        );
+
+        assertAll(
+                () -> assertThat(coreCredentialRecord.isBackupEligible()).isNull(),
+                () -> assertThat(coreCredentialRecord.isBackedUp()).isNull()
+        );
+    }
+
+    @Test
+    void shouldAllowBackupEligibleCredentialWithEitherBackupState() {
+        CoreCredentialRecord backedUp = new CoreCredentialRecordImpl(
+                attestationStatement, true, true, true, signCount, attestedCredentialData, extensions);
+        CoreCredentialRecord notBackedUp = new CoreCredentialRecordImpl(
+                attestationStatement, true, true, false, signCount, attestedCredentialData, extensions);
+
+        assertAll(
+                () -> assertThat(backedUp.isBackupEligible()).isTrue(),
+                () -> assertThat(backedUp.isBackedUp()).isTrue(),
+                () -> assertThat(notBackedUp.isBackupEligible()).isTrue(),
+                () -> assertThat(notBackedUp.isBackedUp()).isFalse()
+        );
+    }
+
+    @Test
+    void shouldRejectSettingBackupEligibleFalseWhileBackedUp() {
+        CoreCredentialRecord coreCredentialRecord = new CoreCredentialRecordImpl(
+                attestationStatement, true, true, true, signCount, attestedCredentialData, extensions);
+
+        assertThatThrownBy(() -> coreCredentialRecord.setBackupEligible(false))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertAll(
+                () -> assertThat(coreCredentialRecord.isBackupEligible()).isTrue(),
+                () -> assertThat(coreCredentialRecord.isBackedUp()).isTrue()
+        );
+    }
+
+    @Test
+    void shouldRejectSettingBackedUpTrueWhileNotBackupEligible() {
+        CoreCredentialRecord coreCredentialRecord = new CoreCredentialRecordImpl(
+                attestationStatement, true, false, false, signCount, attestedCredentialData, extensions);
+
+        assertThatThrownBy(() -> coreCredentialRecord.setBackedUp(true))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertAll(
+                () -> assertThat(coreCredentialRecord.isBackupEligible()).isFalse(),
+                () -> assertThat(coreCredentialRecord.isBackedUp()).isFalse()
+        );
+    }
+
+    @Test
+    void shouldAllowClearingBackupStateBeforeClearingBackupEligibility() {
+        CoreCredentialRecord coreCredentialRecord = new CoreCredentialRecordImpl(
+                attestationStatement, true, true, true, signCount, attestedCredentialData, extensions);
+
+        coreCredentialRecord.setBackedUp(false);
+        coreCredentialRecord.setBackupEligible(false);
+
+        assertAll(
+                () -> assertThat(coreCredentialRecord.isBackupEligible()).isFalse(),
+                () -> assertThat(coreCredentialRecord.isBackedUp()).isFalse()
+        );
+    }
+
+    @Test
+    void shouldAllowBackupStateWhenBackupEligibilityIsUnknown() {
+        CoreCredentialRecord coreCredentialRecord = new CoreCredentialRecordImpl(
+                attestationStatement, null, null, false, signCount, attestedCredentialData, extensions);
+
+        coreCredentialRecord.setBackedUp(true);
+
+        assertAll(
+                () -> assertThat(coreCredentialRecord.isBackupEligible()).isNull(),
+                () -> assertThat(coreCredentialRecord.isBackedUp()).isTrue()
+        );
     }
 }

@@ -30,6 +30,7 @@ public class CoreCredentialRecordImpl extends CoreAuthenticatorImpl implements C
      * including attested credential data, attestation statement, sign count, and flags.
      *
      * @param attestationObject the attestation object containing credential data and flags
+     * @throws IllegalArgumentException if the BE flag is not set while the BS flag is set
      */
     public CoreCredentialRecordImpl(@NotNull AttestationObject attestationObject){
 
@@ -42,6 +43,7 @@ public class CoreCredentialRecordImpl extends CoreAuthenticatorImpl implements C
         this.uvInitialized = (attestationObject.getAuthenticatorData().getFlags() & BIT_UV) != 0;
         this.backupEligible = (attestationObject.getAuthenticatorData().getFlags() & BIT_BE) != 0;
         this.backupState = (attestationObject.getAuthenticatorData().getFlags() & BIT_BS) != 0;
+        BackupStateUtil.validate(this.backupEligible, this.backupState);
     }
 
     /**
@@ -55,6 +57,7 @@ public class CoreCredentialRecordImpl extends CoreAuthenticatorImpl implements C
      * @param counter                 the signature counter value
      * @param attestedCredentialData  the attested credential data, must not be null
      * @param authenticatorExtensions the authenticator extensions, may be null
+     * @throws IllegalArgumentException if {@code backupEligible} is {@code false} while {@code backupState} is {@code true}
      */
     public CoreCredentialRecordImpl(
             @Nullable AttestationStatement attestationStatement,
@@ -65,6 +68,7 @@ public class CoreCredentialRecordImpl extends CoreAuthenticatorImpl implements C
             @NotNull AttestedCredentialData attestedCredentialData,
             @Nullable AuthenticationExtensionsAuthenticatorOutputs<RegistrationExtensionAuthenticatorOutput> authenticatorExtensions) {
         super(attestedCredentialData, attestationStatement, counter, authenticatorExtensions);
+        BackupStateUtil.validate(backupEligible, backupState);
         this.uvInitialized = uvInitialized;
         this.backupEligible = backupEligible;
         this.backupState = backupState;
@@ -99,6 +103,7 @@ public class CoreCredentialRecordImpl extends CoreAuthenticatorImpl implements C
      */
     @Override
     public void setBackupEligible(boolean value) {
+        BackupStateUtil.validate(value, this.backupState);
         this.backupEligible = value;
     }
     
@@ -115,6 +120,7 @@ public class CoreCredentialRecordImpl extends CoreAuthenticatorImpl implements C
      */
     @Override
     public void setBackedUp(boolean value) {
+        BackupStateUtil.validate(this.backupEligible, value);
         this.backupState = value;
     }
 

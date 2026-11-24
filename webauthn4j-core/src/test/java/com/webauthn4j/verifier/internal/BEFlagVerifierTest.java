@@ -13,6 +13,7 @@ import com.webauthn4j.data.extension.client.AuthenticationExtensionsClientOutput
 import com.webauthn4j.test.TestAttestationStatementUtil;
 import com.webauthn4j.test.TestDataUtil;
 import com.webauthn4j.verifier.exception.BadBackupEligibleFlagException;
+import com.webauthn4j.verifier.exception.IllegalBackupStateException;
 import org.junit.jupiter.api.Test;
 
 import java.util.Collections;
@@ -21,8 +22,20 @@ import static com.webauthn4j.data.attestation.authenticator.AuthenticatorData.BI
 import static com.webauthn4j.data.attestation.authenticator.AuthenticatorData.BIT_UP;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class BEFlagVerifierTest {
+
+    @Test
+    void verify_throws_IllegalBackupStateException_if_credentialRecord_has_inconsistent_backup_state_test(){
+        CredentialRecord credentialRecord = mock(CredentialRecord.class);
+        when(credentialRecord.isBackupEligible()).thenReturn(false);
+        when(credentialRecord.isBackedUp()).thenReturn(true);
+        AuthenticatorData<AuthenticationExtensionAuthenticatorOutput> authenticatorData = new AuthenticatorData<>(new byte[32], BIT_UP, 5);
+
+        assertThatThrownBy(()-> BEFlagVerifier.verify(credentialRecord, authenticatorData)).isInstanceOf(IllegalBackupStateException.class);
+    }
 
     @Test
     void verify_with_legacy_Authenticator_instance_test(){

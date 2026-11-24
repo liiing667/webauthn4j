@@ -36,6 +36,8 @@ public interface CoreCredentialRecord extends CoreAuthenticator {
      * Sets the backup eligibility status of this credential.
      *
      * @param value `true` to mark the credential as backup eligible, `false` otherwise.
+     * @throws IllegalArgumentException if the credential is currently backed up and {@code value} is {@code false},
+     *                                  since a credential that is not backup eligible cannot be backed up
      */
     void setBackupEligible(boolean value);
 
@@ -51,6 +53,8 @@ public interface CoreCredentialRecord extends CoreAuthenticator {
      * Sets the backup state of this credential.
      *
      * @param value `true` to mark the credential as backed up, `false` otherwise.
+     * @throws IllegalArgumentException if the credential is not backup eligible and {@code value} is {@code true},
+     *                                  since a credential that is not backup eligible cannot be backed up
      */
     void setBackedUp(boolean value);
 

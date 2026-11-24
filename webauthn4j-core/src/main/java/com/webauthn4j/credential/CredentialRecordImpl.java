@@ -60,6 +60,7 @@ public class CredentialRecordImpl extends CoreCredentialRecordImpl implements Cr
      * @param clientData              the client data collected during the credential creation process, may be null
      * @param clientExtensions        the client extension outputs from the credential creation process, may be null
      * @param transports              the set of authenticator transport methods supported, may be null
+     * @throws IllegalArgumentException if {@code backupEligible} is {@code false} while {@code backupState} is {@code true}
      */
     public CredentialRecordImpl(
             @Nullable AttestationStatement attestationStatement,

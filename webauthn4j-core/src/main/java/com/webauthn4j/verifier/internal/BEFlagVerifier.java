@@ -1,10 +1,12 @@
 package com.webauthn4j.verifier.internal;
 
 import com.webauthn4j.authenticator.Authenticator;
+import com.webauthn4j.credential.BackupStateUtil;
 import com.webauthn4j.credential.CoreCredentialRecord;
 import com.webauthn4j.data.attestation.authenticator.AuthenticatorData;
 import com.webauthn4j.data.extension.authenticator.AuthenticationExtensionAuthenticatorOutput;
 import com.webauthn4j.verifier.exception.BadBackupEligibleFlagException;
+import com.webauthn4j.verifier.exception.IllegalBackupStateException;
 
 /**
  * Verifies backup eligibility flag consistency with credential record.
@@ -12,6 +14,8 @@ import com.webauthn4j.verifier.exception.BadBackupEligibleFlagException;
  * Implements WebAuthn Level 3 § 7.2 Step 19 (backup state verification).
  * Ensures that the BE (Backup Eligible) flag in the current authenticator data
  * matches the backup eligibility recorded in the credential record.
+ * It also rejects a credential record whose backup eligibility and backup state
+ * contradict each other, so an inconsistent record cannot be used for authentication.
  *
  * @see <a href="https://www.w3.org/TR/webauthn-3/#sctn-verifying-assertion">WebAuthn Level 3 § 7.2 Verifying an Authentication Assertion</a>
  */
@@ -23,6 +27,10 @@ public class BEFlagVerifier {
         if(authenticator instanceof CoreCredentialRecord){
             CoreCredentialRecord coreCredentialRecord = (CoreCredentialRecord) authenticator;
             Boolean backEligibleRecordValue = coreCredentialRecord.isBackupEligible();
+            Boolean backedUpRecordValue = coreCredentialRecord.isBackedUp();
+            if(!BackupStateUtil.isConsistent(backEligibleRecordValue, backedUpRecordValue)){
+                throw new IllegalBackupStateException(BackupStateUtil.INCONSISTENT_BACKUP_STATE_MESSAGE);
+            }
             //noinspection StatementWithEmptyBody
             if(backEligibleRecordValue == null){
                 //no-op

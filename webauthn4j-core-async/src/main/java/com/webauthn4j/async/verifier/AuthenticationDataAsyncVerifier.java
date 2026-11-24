@@ -1,6 +1,7 @@
 package com.webauthn4j.async.verifier;
 
 import com.webauthn4j.authenticator.Authenticator;
+import com.webauthn4j.credential.BackupStateUtil;
 import com.webauthn4j.credential.CoreCredentialRecord;
 import com.webauthn4j.data.AuthenticationData;
 import com.webauthn4j.data.AuthenticationParameters;
@@ -17,6 +18,7 @@ import com.webauthn4j.util.AssertUtil;
 import com.webauthn4j.verifier.AuthenticationObject;
 import com.webauthn4j.verifier.exception.ConstraintViolationException;
 import com.webauthn4j.verifier.exception.InconsistentClientDataTypeException;
+import com.webauthn4j.verifier.exception.IllegalBackupStateException;
 import com.webauthn4j.verifier.internal.*;
 import org.jetbrains.annotations.NotNull;
 
@@ -53,10 +55,23 @@ public class AuthenticationDataAsyncVerifier {
     }
 
     static void updateRecord(Authenticator authenticator, AuthenticatorData<AuthenticationExtensionAuthenticatorOutput> authenticatorData) {
-        authenticator.setCounter(authenticatorData.getSignCount());
-        if(authenticator instanceof CoreCredentialRecord){
-            CoreCredentialRecord coreCredentialRecord = (CoreCredentialRecord) authenticator;
+        if(!BackupStateUtil.isConsistent(authenticatorData.isFlagBE(), authenticatorData.isFlagBS())){
+            throw new IllegalBackupStateException(BackupStateUtil.INCONSISTENT_BACKUP_STATE_MESSAGE);
+        }
 
+        CoreCredentialRecord coreCredentialRecord = null;
+        if(authenticator instanceof CoreCredentialRecord){
+            coreCredentialRecord = (CoreCredentialRecord) authenticator;
+            if(!BackupStateUtil.isConsistent(coreCredentialRecord.isBackupEligible(), coreCredentialRecord.isBackedUp())){
+                throw new IllegalBackupStateException(BackupStateUtil.INCONSISTENT_BACKUP_STATE_MESSAGE);
+            }
+            if(!BackupStateUtil.isConsistent(coreCredentialRecord.isBackupEligible(), authenticatorData.isFlagBS())){
+                throw new IllegalBackupStateException(BackupStateUtil.INCONSISTENT_BACKUP_STATE_MESSAGE);
+            }
+        }
+
+        authenticator.setCounter(authenticatorData.getSignCount());
+        if(coreCredentialRecord != null){
             coreCredentialRecord.setBackedUp(authenticatorData.isFlagBS());
 
             Boolean uvInitializedRecord = coreCredentialRecord.isUvInitialized();
