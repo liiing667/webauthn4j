@@ -160,7 +160,9 @@ public class ServerProperty extends CoreServerProperty {
 
         /**
          * Sets a topOriginPredicate that accepts any topOrigins.
-         * This allows WebAuthn operations in any iframe scenario regardless of the top origin.
+         * This allows WebAuthn operations in any iframe scenario regardless of the top origin,
+         * but a topOrigin is still required when crossOrigin is true. A missing topOrigin is
+         * never accepted merely because any top origin is allowed.
          *
          * @return the builder instance for method chaining
          */

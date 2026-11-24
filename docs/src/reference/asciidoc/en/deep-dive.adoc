@@ -237,7 +237,7 @@ ServerProperty serverProperty = ServerProperty.builder()
 ** anyTopOrigin(): Allow any top origin (convenient, but expands the security boundary and should be used with care)
 * Default behavior
 ** If you do not configure a topOriginPredicate, cross‑origin iframe usage is not allowed.
-** If the client does not provide topOrigin, only the normal origin verification is performed.
+** crossOrigin and topOrigin are validated as one consistent cross-origin identity: crossOrigin=true requires a topOrigin that matches the configured predicate, while a topOrigin without crossOrigin=true is rejected as contradictory. A missing topOrigin cannot be accepted merely because anyTopOrigin() is configured.
 * Example (allow a specific parent origin)
 [source,java]
 ----
@@ -261,7 +261,7 @@ ServerProperty serverProperty = ServerProperty.builder()
 * Security considerations
 ** anyTopOrigin significantly increases the attack surface. Prefer whitelisting specific parent origins with topOrigin/topOrigins/topOriginPredicate wherever possible.
 * Backward compatibility
-** Legacy coarse‑grained allow flags may remain for compatibility, but for new setups use topOriginPredicate (or anyTopOrigin where strictly necessary). The client’s crossOrigin value is a supplemental signal; the final allow/deny decision should be made by the server‑side topOrigin configuration.
+** Legacy coarse‑grained allow flags may remain for compatibility, but for new setups use topOriginPredicate (or anyTopOrigin where strictly necessary). The final allow/deny decision combines the client’s crossOrigin value, the presence and value of topOrigin, and the server‑side topOrigin configuration.
 
 
 

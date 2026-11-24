@@ -382,7 +382,7 @@ updateCounter(
         authenticationData.getAuthenticatorData().getSignCount()
 );
 ----
-Note: Origin verification checks that the Origin recognized by the browser at the time of the ceremony matches your expected Origin. Cross‑origin iframe execution is disallowed by default. For legitimate embedding use cases, explicitly configure server‑side acceptance of specific parent origins via the ServerProperty builder (`topOrigin(...)`/`topOrigins(...)`/`topOriginPredicate(...)`), or use `anyTopOrigin()` only if strictly necessary. The client’s `crossOrigin` value is a supplemental signal; the server’s top‑origin configuration determines allow/deny.
+Note: Origin verification checks that the Origin recognized by the browser at the time of the ceremony matches your expected Origin. Cross‑origin iframe execution is disallowed by default. For legitimate embedding use cases, explicitly configure server‑side acceptance of specific parent origins via the ServerProperty builder (`topOrigin(...)`/`topOrigins(...)`/`topOriginPredicate(...)`), or use `anyTopOrigin()` only if strictly necessary. The client’s `crossOrigin` value and `topOrigin` value are validated together with the server’s top‑origin configuration: crossOrigin=true requires a matching topOrigin, and a topOrigin without crossOrigin=true is rejected as contradictory.
 
 The `AuthenticationParameters`, which is another argument of the `WebAuthnManager#verifyAuthenticationResponseJSON` method, is a parameter that encapsulates the server’s state and verification conditions.
 

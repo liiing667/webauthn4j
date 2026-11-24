@@ -17,14 +17,16 @@ import com.webauthn4j.data.client.Origin;
  */
 public class AnyOriginPredicate implements OriginPredicate {
     /**
-     * Always returns {@code true}, accepting any origin.
+     * Returns {@code true} for any non-null origin, accepting it regardless of its value.
+     * A missing origin is still rejected: accepting {@code null} would turn the absence of
+     * the cross-origin evidence into permission, which is unsafe.
      *
      * @param origin the origin to test (ignored)
-     * @return always {@code true}
+     * @return {@code true} if {@code origin} is not null, {@code false} otherwise
      */
     @Override
     public boolean test(Origin origin) {
-        return true;
+        return origin != null;
     }
 
     @Override

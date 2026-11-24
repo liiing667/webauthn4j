@@ -225,7 +225,7 @@ ServerProperty serverProperty = ServerProperty.builder()
 ** anyTopOrigin(): すべてのトップオリジンを許可（利便性は高いがセキュリティ境界を広げるため慎重に使用）
 * 既定の挙動
 ** 明示的に topOrigin を設定しない場合、クロスオリジンな iframe からの利用は許可されません。
-** クライアントから topOrigin が提供されない場合は、通常の origin 検証のみが行われます。
+** crossOrigin と topOrigin は一貫したクロスオリジン識別情報として検証されます。crossOrigin=true の場合は設定済みの述語に一致する topOrigin が必須であり、crossOrigin=true を伴わない topOrigin は矛盾として拒否されます。anyTopOrigin() を設定していても、topOrigin の欠落を許可しません。
 * 使用例（特定のトップオリジンのみ許可）
 [source,java]
 ----
@@ -249,7 +249,7 @@ ServerProperty serverProperty = ServerProperty.builder()
 * セキュリティ考慮
 ** 任意許可（anyTopOrigin）は攻撃面の拡大につながる可能性があります。可能な限り topOrigin/topOrigins/topOriginPredicate により許可範囲を限定してください。
 * 後方互換
-** 旧来の包括的許可フラグは後方互換のために残されていますが、新規の構成では topOriginPredicate（または anyTopOrigin）を使用してください。
+** 旧来の包括的許可フラグは後方互換のために残されていますが、新規の構成では topOriginPredicate（または anyTopOrigin）を使用してください。最終的な許可・拒否は、クライアントの crossOrigin 値、topOrigin の有無と値、サーバー側の topOrigin 設定を組み合わせて判断されます。
 
 
 === カスタムな検証ロジックの実装
