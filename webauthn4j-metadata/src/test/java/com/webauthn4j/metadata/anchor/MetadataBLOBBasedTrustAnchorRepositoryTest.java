@@ -50,7 +50,11 @@ class MetadataBLOBBasedTrustAnchorRepositoryTest {
     @Test
     void find_by_attestationCertificateIdentifier_test(){
         MetadataBLOBBasedTrustAnchorRepository target = createWithBlob("src/test/resources/integration/component/blob.jwt");
-        Set<TrustAnchor> trustAnchors = target.find(HexUtil.decode("2fea8f357c7a54a57f45cda72fafb34d1d449fd4"));
+        byte[] attestationCertificateKeyIdentifier = HexUtil.decode("2fea8f357c7a54a57f45cda72fafb34d1d449fd4");
+        assertThat(target.find(attestationCertificateKeyIdentifier)).isEmpty();
+
+        target.setNotFidoCertifiedAllowed(true);
+        Set<TrustAnchor> trustAnchors = target.find(attestationCertificateKeyIdentifier);
         assertThat(trustAnchors).isNotEmpty();
     }
 

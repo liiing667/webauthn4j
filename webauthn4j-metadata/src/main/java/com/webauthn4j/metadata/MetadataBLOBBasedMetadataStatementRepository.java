@@ -20,13 +20,12 @@ import com.webauthn4j.data.attestation.authenticator.AAGUID;
 import com.webauthn4j.metadata.data.MetadataBLOBPayloadEntry;
 import com.webauthn4j.metadata.data.statement.MetadataStatement;
 import com.webauthn4j.metadata.util.internal.MetadataBLOBUtil;
-import com.webauthn4j.metadata.util.internal.MetadataStatementUtil;
-import com.webauthn4j.util.HexUtil;
 
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
 public class MetadataBLOBBasedMetadataStatementRepository implements MetadataStatementRepository {
@@ -42,31 +41,25 @@ public class MetadataBLOBBasedMetadataStatementRepository implements MetadataSta
 
     @Override
     public Set<MetadataStatement> find(AAGUID aaguid) {
-        return metadataBLOBProviders.stream()
-                .flatMap(provider -> provider.provide().getPayload().getEntries().stream())
-                .filter(entry -> Objects.equals(entry.getAaguid(), aaguid))
-                .filter(entry -> MetadataBLOBUtil.checkMetadataBLOBPayloadEntry(entry, notFidoCertifiedAllowed, selfAssertionSubmittedAllowed))
-                .map(MetadataBLOBPayloadEntry::getMetadataStatement)
-                .filter(MetadataStatementUtil::checkSurrogateMetadataStatementAttestationRootCertificate)
-                .collect(Collectors.toSet());
+        return find(entry -> MetadataBLOBUtil.matchesAAGUID(entry, aaguid));
     }
 
     @Override
     public Set<MetadataStatement> find(byte[] attestationCertificateKeyIdentifier) {
-        return metadataBLOBProviders.stream()
+        return find(entry -> matchAttestationCertificateKeyIdentifier(entry, attestationCertificateKeyIdentifier));
+    }
+
+    private Set<MetadataStatement> find(Predicate<MetadataBLOBPayloadEntry> entryMatcher) {
+        List<MetadataBLOBPayloadEntry> entries = metadataBLOBProviders.stream()
                 .flatMap(provider -> provider.provide().getPayload().getEntries().stream())
-                .filter(entry -> matchAttestationCertificateKeyIdentifier(entry, attestationCertificateKeyIdentifier))
-                .map(MetadataBLOBPayloadEntry::getMetadataStatement)
-                .filter(MetadataStatementUtil::checkSurrogateMetadataStatementAttestationRootCertificate)
-                .collect(Collectors.toSet());
+                .filter(Objects::nonNull)
+                .collect(Collectors.toList());
+        return MetadataBLOBUtil.findMetadataStatements(
+                entries, entryMatcher, notFidoCertifiedAllowed, selfAssertionSubmittedAllowed);
     }
 
     public static boolean matchAttestationCertificateKeyIdentifier(MetadataBLOBPayloadEntry entry, byte[] attestationCertificateKeyIdentifier) {
-        MetadataStatement metadataStatement = entry.getMetadataStatement();
-        if(metadataStatement == null || metadataStatement.getAttestationCertificateKeyIdentifiers() == null){
-            return false;
-        }
-        return metadataStatement.getAttestationCertificateKeyIdentifiers().stream().anyMatch(identifier -> Arrays.equals(HexUtil.decode(identifier), attestationCertificateKeyIdentifier));
+        return MetadataBLOBUtil.matchesAttestationCertificateKeyIdentifier(entry, attestationCertificateKeyIdentifier);
     }
 
 

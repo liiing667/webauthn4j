@@ -4,7 +4,6 @@ import com.webauthn4j.data.attestation.authenticator.AAGUID;
 import com.webauthn4j.metadata.data.MetadataBLOBPayloadEntry;
 import com.webauthn4j.metadata.data.statement.MetadataStatement;
 import com.webauthn4j.metadata.util.internal.MetadataBLOBUtil;
-import com.webauthn4j.metadata.util.internal.MetadataStatementUtil;
 
 import java.util.Arrays;
 import java.util.List;
@@ -12,6 +11,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -30,30 +30,26 @@ public class MetadataBLOBBasedMetadataStatementAsyncRepository implements Metada
 
     @Override
     public CompletionStage<Set<MetadataStatement>> find(AAGUID aaguid) {
-        return metadataBLOBAsyncProviders.stream()
-                .map(provider -> provider.provide().thenApply(metadataBLOB -> metadataBLOB.getPayload().getEntries().stream()))
-                .reduce(CompletableFuture.completedFuture(Stream.empty()),
-                        (a, b)-> a.thenCombine(b, Stream::concat)
-                ).thenApply(entries ->
-                        entries
-                        .filter(entry -> Objects.equals(entry.getAaguid(), aaguid))
-                        .filter(entry -> MetadataBLOBUtil.checkMetadataBLOBPayloadEntry(entry, notFidoCertifiedAllowed, selfAssertionSubmittedAllowed))
-                        .map(MetadataBLOBPayloadEntry::getMetadataStatement)
-                        .filter(MetadataStatementUtil::checkSurrogateMetadataStatementAttestationRootCertificate)
-                        .collect(Collectors.toSet())
-                );
+        return find(entry -> MetadataBLOBUtil.matchesAAGUID(entry, aaguid));
     }
 
     @Override
     public CompletionStage<Set<MetadataStatement>> find(byte[] attestationCertificateKeyIdentifier) {
+        return find(entry -> matchAttestationCertificateKeyIdentifier(entry, attestationCertificateKeyIdentifier));
+    }
+
+    private CompletionStage<Set<MetadataStatement>> find(Predicate<MetadataBLOBPayloadEntry> entryMatcher) {
         return metadataBLOBAsyncProviders.stream()
                 .map(provider -> provider.provide().thenApply(metadataBLOB -> metadataBLOB.getPayload().getEntries().stream()))
-                .reduce(CompletableFuture.completedFuture(Stream.empty()), (a, b)-> a.thenCombine(b, Stream::concat))
-                .thenApply(entries -> entries
-                        .filter(entry -> matchAttestationCertificateKeyIdentifier(entry, attestationCertificateKeyIdentifier))
-                        .map(MetadataBLOBPayloadEntry::getMetadataStatement)
-                        .filter(MetadataStatementUtil::checkSurrogateMetadataStatementAttestationRootCertificate)
-                        .collect(Collectors.toSet()));
+                .reduce(CompletableFuture.completedFuture(Stream.empty()),
+                        (a, b)-> a.thenCombine(b, Stream::concat)
+                ).thenApply(entries -> {
+                    List<MetadataBLOBPayloadEntry> metadataBLOBPayloadEntries = entries
+                            .filter(Objects::nonNull)
+                            .collect(Collectors.toList());
+                    return MetadataBLOBUtil.findMetadataStatements(
+                            metadataBLOBPayloadEntries, entryMatcher, notFidoCertifiedAllowed, selfAssertionSubmittedAllowed);
+                });
     }
 
     public boolean isNotFidoCertifiedAllowed() {
