@@ -25,12 +25,16 @@ import com.webauthn4j.metadata.exception.MDSException;
 import com.webauthn4j.metadata.util.internal.DefaultCertPathChecker;
 import org.jetbrains.annotations.NotNull;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.UncheckedIOException;
+import java.net.HttpURLConnection;
+import java.nio.charset.StandardCharsets;
 import java.security.cert.CertPath;
 import java.security.cert.TrustAnchor;
 import java.security.cert.X509Certificate;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.Collections;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -44,6 +48,11 @@ import java.util.concurrent.Executors;
 public class FidoMDS3MetadataBLOBAsyncProvider extends CachingMetadataBLOBAsyncProvider {
 
     public static final String DEFAULT_BLOB_ENDPOINT = "https://mds.fidoalliance.org/";
+    /**
+     * Default upper bound of a MetadataBLOB response body.
+     * The bound prevents an unexpected or malicious response from being read into memory without limit.
+     */
+    public static final int DEFAULT_MAX_RESPONSE_BODY_SIZE = 10 * 1024 * 1024;
 
     private static final Executor DEFAULT_CERT_PATH_VALIDATION_EXECUTOR =
             Executors.newSingleThreadExecutor(runnable -> {
@@ -57,6 +66,7 @@ public class FidoMDS3MetadataBLOBAsyncProvider extends CachingMetadataBLOBAsyncP
     private final HttpAsyncClient httpClient;
     private final Set<TrustAnchor> trustAnchors;
     private boolean revocationCheckEnabled = true;
+    private int maxResponseBodySize = DEFAULT_MAX_RESPONSE_BODY_SIZE;
     private CertPathAsyncChecker certPathAsyncChecker;
 
     public FidoMDS3MetadataBLOBAsyncProvider(@NotNull ObjectConverter objectConverter, @NotNull String blobEndpoint, @NotNull HttpAsyncClient httpClient, @NotNull Set<TrustAnchor> trustAnchors, @NotNull Executor certPathValidationExecutor) {
@@ -90,8 +100,17 @@ public class FidoMDS3MetadataBLOBAsyncProvider extends CachingMetadataBLOBAsyncP
     @Override
     protected @NotNull CompletionStage<MetadataBLOB> doProvide() {
         return httpClient.fetch(blobEndpoint).thenApply(response -> {
+            assertSuccessfulResponse(response);
             String body = readAsString(response.getBody());
-            return metadataBLOBFactory.parse(body);
+            MetadataBLOB metadataBLOB;
+            try {
+                metadataBLOB = metadataBLOBFactory.parse(body);
+            }
+            catch (RuntimeException e) {
+                throw new MDSException("Failed to parse response as MetadataBLOB", e);
+            }
+            validateFreshness(metadataBLOB);
+            return metadataBLOB;
         }).thenCompose(metadataBLOB -> {
             if(!metadataBLOB.isValidSignature()){
                 throw new MDSException("MetadataBLOB signature is invalid");
@@ -100,11 +119,59 @@ public class FidoMDS3MetadataBLOBAsyncProvider extends CachingMetadataBLOBAsyncP
         });
     }
 
-    private static @NotNull String readAsString(InputStream responseBody) {
-        try {
-            return new String(responseBody.readAllBytes());
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
+    private void assertSuccessfulResponse(@NotNull com.webauthn4j.metadata.HttpClient.Response response) {
+        if(response == null){
+            throw new MDSException("MetadataBLOB endpoint returned no response");
+        }
+        if(response.getStatusCode() != HttpURLConnection.HTTP_OK){
+            closeQuietly(response.getBody());
+            throw new MDSException("MetadataBLOB endpoint returned HTTP status " + response.getStatusCode());
+        }
+    }
+
+    private @NotNull String readAsString(@NotNull InputStream responseBody) {
+        if(responseBody == null){
+            throw new MDSException("MetadataBLOB response body is missing");
+        }
+        try (InputStream body = responseBody) {
+            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+            byte[] buffer = new byte[8192];
+            long total = 0;
+            while (true) {
+                int maxRead = (int) Math.min(buffer.length, (long) maxResponseBodySize - total + 1);
+                int read = body.read(buffer, 0, maxRead);
+                if (read == -1) {
+                    break;
+                }
+                total += read;
+                if (total > maxResponseBodySize) {
+                    throw new MDSException("MetadataBLOB response body exceeds the maximum size of " + maxResponseBodySize + " bytes");
+                }
+                outputStream.write(buffer, 0, read);
+            }
+            return new String(outputStream.toByteArray(), StandardCharsets.UTF_8);
+        }
+        catch (IOException e) {
+            throw new MDSException("Failed to read response body", e);
+        }
+    }
+
+    private void validateFreshness(@NotNull MetadataBLOB metadataBLOB) {
+        LocalDate nextUpdate = metadataBLOB.getPayload().getNextUpdate();
+        LocalDate today = LocalDate.now(ZoneOffset.UTC);
+        if (nextUpdate == null || !nextUpdate.isAfter(today)) {
+            throw new MDSException("MetadataBLOB is expired: nextUpdate=" + nextUpdate + ", today=" + today);
+        }
+    }
+
+    private static void closeQuietly(InputStream inputStream) {
+        if (inputStream != null) {
+            try {
+                inputStream.close();
+            }
+            catch (IOException ignored) {
+                // The response is rejected regardless of whether the body can be closed.
+            }
         }
     }
 
@@ -132,6 +199,17 @@ public class FidoMDS3MetadataBLOBAsyncProvider extends CachingMetadataBLOBAsyncP
 
     public void setCertPathAsyncValidator(CertPathAsyncChecker certPathAsyncChecker) {
         this.certPathAsyncChecker = certPathAsyncChecker;
+    }
+
+    public int getMaxResponseBodySize() {
+        return maxResponseBodySize;
+    }
+
+    public void setMaxResponseBodySize(int maxResponseBodySize) {
+        if (maxResponseBodySize <= 0) {
+            throw new IllegalArgumentException("maxResponseBodySize must be greater than zero");
+        }
+        this.maxResponseBodySize = maxResponseBodySize;
     }
 
     private static class DefaultCertPathAsyncChecker implements CertPathAsyncChecker {

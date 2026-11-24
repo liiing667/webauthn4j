@@ -31,24 +31,33 @@ public abstract class CachingMetadataBLOBProvider implements MetadataBLOBProvide
     @Override
     public @NotNull MetadataBLOB provide(){
         synchronized (cachedMetadataBLOBLock){
-            if(cachedMetadataBLOB == null){
-                refresh();
+            LocalDate today = LocalDate.now(ZoneOffset.UTC);
+            if(needsRefresh(today)){
+                doRefresh(today);
             }
+            return cachedMetadataBLOB;
         }
-        LocalDate today = LocalDate.now(ZoneOffset.UTC);
-        LocalDate nextUpdate = cachedMetadataBLOB.getPayload().getNextUpdate();
-        if((nextUpdate.isBefore(today) || nextUpdate.isEqual(today)) && cachedMetadataBLOBLastUpdate.isBefore(today)){
-            refresh();
-        }
-
-        return cachedMetadataBLOB;
     }
 
     public void refresh(){
         synchronized (cachedMetadataBLOBLock){
-            cachedMetadataBLOB = doProvide();
-            cachedMetadataBLOBLastUpdate = LocalDate.now(ZoneOffset.UTC);
+            doRefresh(LocalDate.now(ZoneOffset.UTC));
         }
+    }
+
+    private boolean needsRefresh(@NotNull LocalDate today){
+        if(cachedMetadataBLOB == null){
+            return true;
+        }
+        LocalDate nextUpdate = cachedMetadataBLOB.getPayload().getNextUpdate();
+        return (nextUpdate.isBefore(today) || nextUpdate.isEqual(today)) && cachedMetadataBLOBLastUpdate.isBefore(today);
+    }
+
+    private void doRefresh(@NotNull LocalDate today){
+        // Publish the blob and its timestamp together only after doProvide has completely validated the candidate.
+        MetadataBLOB candidate = doProvide();
+        cachedMetadataBLOB = candidate;
+        cachedMetadataBLOBLastUpdate = today;
     }
 
     protected abstract @NotNull MetadataBLOB doProvide();

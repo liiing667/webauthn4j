@@ -70,6 +70,7 @@ class FidoMDS3MetadataBLOBProviderTest {
             HttpClient httpClient = mock(HttpClient.class, Mockito.RETURNS_DEEP_STUBS);
             Path blobJwtPath = Paths.get(ClassLoader.getSystemResource("integration/component/blob.jwt").toURI()); //expired blob
             FileInputStream inputStream = new FileInputStream(blobJwtPath.toFile());
+            when(httpClient.fetch(FidoMDS3MetadataBLOBProvider.DEFAULT_BLOB_ENDPOINT).getStatusCode()).thenReturn(200);
             when(httpClient.fetch(FidoMDS3MetadataBLOBProvider.DEFAULT_BLOB_ENDPOINT).getBody()).thenReturn(inputStream);
             target = new FidoMDS3MetadataBLOBProvider(new ObjectConverter(), FidoMDS3MetadataBLOBProvider.DEFAULT_BLOB_ENDPOINT, httpClient, Collections.singleton(new TrustAnchor(rootCertificate, null)));
         }
@@ -79,8 +80,25 @@ class FidoMDS3MetadataBLOBProviderTest {
             assertThatThrownBy(target::provide).isInstanceOf(MDSException.class);
         }
 
+    }
+
+    @Nested
+    class when_fresh_blob_is_returned{
+
+        private FidoMDS3MetadataBLOBProvider target;
+
+        @BeforeEach
+        void setup() throws IOException, URISyntaxException {
+            HttpClient httpClient = mock(HttpClient.class, Mockito.RETURNS_DEEP_STUBS);
+            Path blobJwtPath = Paths.get(ClassLoader.getSystemResource("integration/component/fresh-blob.jwt").toURI());
+            FileInputStream inputStream = new FileInputStream(blobJwtPath.toFile());
+            when(httpClient.fetch(FidoMDS3MetadataBLOBProvider.DEFAULT_BLOB_ENDPOINT).getStatusCode()).thenReturn(200);
+            when(httpClient.fetch(FidoMDS3MetadataBLOBProvider.DEFAULT_BLOB_ENDPOINT).getBody()).thenReturn(inputStream);
+            target = new FidoMDS3MetadataBLOBProvider(new ObjectConverter(), FidoMDS3MetadataBLOBProvider.DEFAULT_BLOB_ENDPOINT, httpClient, Collections.singleton(new TrustAnchor(rootCertificate, null)));
+        }
+
         @Test
-        void provide_does_not_throw_MDSException_when_nop_CertPathChecker_is_configured_through_setCertPathChecker() {
+        void provide_succeeds_when_nop_CertPathChecker_is_configured_through_setCertPathChecker() {
             CertPathChecker certPathChecker = context -> {
                 //nop
             };
