@@ -221,14 +221,15 @@ public class CoreAuthenticationDataVerifier {
         //spec| If authData.signCount is nonzero or credentialRecord.signCount is nonzero, then run the following sub-step:
         long presentedSignCount = authenticatorData.getSignCount();
         long storedSignCount = authenticator.getCounter();
+        boolean updateCounter = false;
         if (presentedSignCount > 0 || storedSignCount > 0) {
             //spec| If authData.signCount is
             //spec| greater than credentialRecord.signCount:
             if (presentedSignCount > storedSignCount) {
 
                 //spec| The signature counter is valid.
-                //      (caller need to update the signature counter value based on the value set in the Authenticator instance)
-                authenticator.setCounter(presentedSignCount);
+                //      (the signature counter value is committed after all verifications succeed)
+                updateCounter = true;
             }
             //spec| less than or equal to credentialRecord.signCount:
             //spec| This is a signal, but not proof, that the authenticator may be cloned. For example it might mean that:
@@ -270,6 +271,12 @@ public class CoreAuthenticationDataVerifier {
 
         for (CustomCoreAuthenticationVerifier customAuthenticationVerifier : customAuthenticationVerifiers) {
             customAuthenticationVerifier.verify(authenticationObject);
+        }
+
+        //      Commit the credential record only after every check, including custom policy checks, has succeeded.
+        //      (caller need to update the signature counter value based on the value set in the Authenticator instance)
+        if (updateCounter) {
+            authenticator.setCounter(presentedSignCount);
         }
 
         //spec| Step25

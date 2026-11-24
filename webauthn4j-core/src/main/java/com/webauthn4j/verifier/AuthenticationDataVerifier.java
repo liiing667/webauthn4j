@@ -269,13 +269,14 @@ public class AuthenticationDataVerifier {
         //spec| - If credentialRecord.uvInitialized is false, update it to the value of the UV bit in the flags in authData.
         //spec|   This change SHOULD require authorization by an additional authentication factor equivalent to WebAuthn user verification;
         //spec|   if not authorized, skip this step.
-        //spec| If the Relying Party performs additional security checks beyond these WebAuthn authentication ceremony steps,
-        //spec| the above state updates SHOULD be deferred to after those additional checks are completed successfully.
-        updateRecord(authenticator, authenticatorData);
-
         for (CustomAuthenticationVerifier customAuthenticationVerifier : customAuthenticationVerifiers) {
             customAuthenticationVerifier.verify(authenticationObject);
         }
+
+        //spec| If the Relying Party performs additional security checks beyond these WebAuthn authentication ceremony steps,
+        //spec| the above state updates SHOULD be deferred to after those additional checks are completed successfully.
+        //      Commit the credential record only after every check, including custom policy checks, has succeeded.
+        updateRecord(authenticator, authenticatorData);
 
         //spec| Step25
         //spec| If all the above steps are successful, continue the authentication ceremony as appropriate. Otherwise, fail the authentication ceremony.

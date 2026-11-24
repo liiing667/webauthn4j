@@ -294,23 +294,22 @@ public class AuthenticationDataAsyncVerifier {
             //spec|   by using the attestation statement format fmt’s verification procedure given attStmt, authData and hash.
             //TODO: Since Step25 is removed in the latest Editor's draft(as of 2024-04-07, see https://github.com/w3c/webauthn/pull/1997), this step is left not implemented. This step need to be removed when the next draft is released.
 
+            //spec| - OPTIONALLY, if response.attestationObject is present, update credentialRecord.attestationObject to the value of response.attestationObject and update credentialRecord.attestationClientDataJSON to the value of response.clientDataJSON.
+            //TODO: Since this optional step is removed in the latest Editor's draft(as of 2024-04-07), this step is left not implemented. This step need to be removed when the next draft is released.
+
+            //spec| If the Relying Party performs additional security checks beyond these WebAuthn authentication ceremony steps, the above state updates SHOULD be deferred to after those additional checks are completed successfully.
+            CompletableFuture<Void> completableFuture = CompletableFuture.completedFuture(null);
+            for (CustomAuthenticationAsyncVerifier customAuthenticationAsyncVerifier : customAuthenticationAsyncVerifiers) {
+                completableFuture = completableFuture.thenCompose(unused -> customAuthenticationAsyncVerifier.verify(authenticationObject).toCompletableFuture());
+            }
+
             //spec| Step26
             //spec| Update credentialRecord with new state values:
             //spec| - Update credentialRecord.signCount to the value of authData.signCount.
             //spec| - Update credentialRecord.backupState to the value of currentBs.
             //spec| - If credentialRecord.uvInitialized is false, update it to the value of the UV bit in the flags in authData. This change SHOULD require authorization by an additional authentication factor equivalent to WebAuthn user verification; if not authorized, skip this step.
-            updateRecord(authenticationParameters.getAuthenticator(), authenticatorData);
-
-            //spec| - OPTIONALLY, if response.attestationObject is present, update credentialRecord.attestationObject to the value of response.attestationObject and update credentialRecord.attestationClientDataJSON to the value of response.clientDataJSON.
-            //TODO: Since this optional step is removed in the latest Editor's draft(as of 2024-04-07), this step is left not implemented. This step need to be removed when the next draft is released.
-
-            //spec| If the Relying Party performs additional security checks beyond these WebAuthn authentication ceremony steps, the above state updates SHOULD be deferred to after those additional checks are completed successfully.
-            //      (This step is out of WebAuthn4J scope. It's caller's responsibility.)
-
-            CompletableFuture<Void> completableFuture = CompletableFuture.completedFuture(null);
-            for (CustomAuthenticationAsyncVerifier customAuthenticationAsyncVerifier : customAuthenticationAsyncVerifiers) {
-                completableFuture = completableFuture.thenCompose(unused -> customAuthenticationAsyncVerifier.verify(authenticationObject).toCompletableFuture());
-            }
+            //      Commit the credential record only after every check, including custom policy checks, has succeeded.
+            completableFuture = completableFuture.thenRun(() -> updateRecord(authenticationParameters.getAuthenticator(), authenticatorData));
 
             //spec| Step27
             //spec| If all the above steps are successful, continue with the authentication ceremony as appropriate. Otherwise, fail the authentication ceremony.
