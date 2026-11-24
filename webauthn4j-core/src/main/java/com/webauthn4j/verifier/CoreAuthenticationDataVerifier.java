@@ -227,8 +227,9 @@ public class CoreAuthenticationDataVerifier {
             if (presentedSignCount > storedSignCount) {
 
                 //spec| The signature counter is valid.
-                //      (caller need to update the signature counter value based on the value set in the Authenticator instance)
-                authenticator.setCounter(presentedSignCount);
+                //      (The signature counter update is deferred until all verification steps,
+                //      including extension verification and custom verifiers, complete successfully.
+                //      See the deferred state update below.)
             }
             //spec| less than or equal to credentialRecord.signCount:
             //spec| This is a signal, but not proof, that the authenticator may be cloned. For example it might mean that:
@@ -266,10 +267,22 @@ public class CoreAuthenticationDataVerifier {
         //spec|   if not authorized, skip this step.
         //spec| If the Relying Party performs additional security checks beyond these WebAuthn authentication ceremony steps,
         //spec| the above state updates SHOULD be deferred to after those additional checks are completed successfully.
-        //      (This step is handled by AuthenticationDataVerifier.updateRecord() in WebAuthn context)
+        //      (The signature counter update is deferred to after the custom verifiers below,
+        //      so that an assertion rejected by extension verification or Relying Party policy
+        //      does not advance the stored counter. In WebAuthn context, the remaining state
+        //      updates are handled by AuthenticationDataVerifier.updateRecord())
 
         for (CustomCoreAuthenticationVerifier customAuthenticationVerifier : customAuthenticationVerifiers) {
             customAuthenticationVerifier.verify(authenticationObject);
+        }
+
+        //      Deferred state update: publish the new signature counter value to the authenticator
+        //      (credential record) only now that every verification step, including Relying Party
+        //      policy checks implemented as custom verifiers, has completed successfully.
+        //      This keeps assertion acceptance and the counter update atomic: a rejected, replayed
+        //      or tampered assertion never consumes the counter of the next valid assertion.
+        if (presentedSignCount > storedSignCount) {
+            authenticator.setCounter(presentedSignCount);
         }
 
         //spec| Step25

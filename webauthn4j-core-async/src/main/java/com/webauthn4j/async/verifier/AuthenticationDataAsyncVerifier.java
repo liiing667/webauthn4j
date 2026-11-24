@@ -299,18 +299,23 @@ public class AuthenticationDataAsyncVerifier {
             //spec| - Update credentialRecord.signCount to the value of authData.signCount.
             //spec| - Update credentialRecord.backupState to the value of currentBs.
             //spec| - If credentialRecord.uvInitialized is false, update it to the value of the UV bit in the flags in authData. This change SHOULD require authorization by an additional authentication factor equivalent to WebAuthn user verification; if not authorized, skip this step.
-            updateRecord(authenticationParameters.getAuthenticator(), authenticatorData);
+            //      (The state update is deferred to after the custom verifiers below, so that an assertion
+            //      rejected by Relying Party policy does not mutate the credential record.)
 
             //spec| - OPTIONALLY, if response.attestationObject is present, update credentialRecord.attestationObject to the value of response.attestationObject and update credentialRecord.attestationClientDataJSON to the value of response.clientDataJSON.
             //TODO: Since this optional step is removed in the latest Editor's draft(as of 2024-04-07), this step is left not implemented. This step need to be removed when the next draft is released.
 
             //spec| If the Relying Party performs additional security checks beyond these WebAuthn authentication ceremony steps, the above state updates SHOULD be deferred to after those additional checks are completed successfully.
-            //      (This step is out of WebAuthn4J scope. It's caller's responsibility.)
 
             CompletableFuture<Void> completableFuture = CompletableFuture.completedFuture(null);
             for (CustomAuthenticationAsyncVerifier customAuthenticationAsyncVerifier : customAuthenticationAsyncVerifiers) {
                 completableFuture = completableFuture.thenCompose(unused -> customAuthenticationAsyncVerifier.verify(authenticationObject).toCompletableFuture());
             }
+
+            //      Deferred state update: publish the new state values to the credential record only after
+            //      every verification step, including Relying Party policy checks implemented as custom
+            //      verifiers, has completed successfully.
+            completableFuture = completableFuture.thenRun(() -> updateRecord(authenticationParameters.getAuthenticator(), authenticatorData));
 
             //spec| Step27
             //spec| If all the above steps are successful, continue with the authentication ceremony as appropriate. Otherwise, fail the authentication ceremony.

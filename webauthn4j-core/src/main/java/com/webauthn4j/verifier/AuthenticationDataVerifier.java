@@ -271,11 +271,17 @@ public class AuthenticationDataVerifier {
         //spec|   if not authorized, skip this step.
         //spec| If the Relying Party performs additional security checks beyond these WebAuthn authentication ceremony steps,
         //spec| the above state updates SHOULD be deferred to after those additional checks are completed successfully.
-        updateRecord(authenticator, authenticatorData);
+        //      (The state update is deferred to after the custom verifiers below, so that an assertion
+        //      rejected by Relying Party policy does not mutate the credential record.)
 
         for (CustomAuthenticationVerifier customAuthenticationVerifier : customAuthenticationVerifiers) {
             customAuthenticationVerifier.verify(authenticationObject);
         }
+
+        //      Deferred state update: publish the new state values to the credential record only now
+        //      that every verification step, including Relying Party policy checks implemented as
+        //      custom verifiers, has completed successfully.
+        updateRecord(authenticator, authenticatorData);
 
         //spec| Step25
         //spec| If all the above steps are successful, continue the authentication ceremony as appropriate. Otherwise, fail the authentication ceremony.
