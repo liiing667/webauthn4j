@@ -40,7 +40,8 @@ public class MetadataStatementsBasedTrustAnchorAsyncRepository implements TrustA
     public CompletionStage<Set<TrustAnchor>> find(byte[] attestationCertificateKeyIdentifier) {
         return metadataStatementsAsyncProvider.provide().thenApply( metadataStatements -> metadataStatements.stream()
                 .filter(metadataStatement -> metadataStatement.getAttestationCertificateKeyIdentifiers() != null && metadataStatement.getAttestationCertificateKeyIdentifiers().stream().anyMatch(identifier -> Arrays.equals(HexUtil.decode(identifier), attestationCertificateKeyIdentifier)))
-                .map(metadataStatement -> new TrustAnchor(metadataStatement.getAttestationRootCertificates().get(0), null))
+                .flatMap(metadataStatement -> metadataStatement.getAttestationRootCertificates().stream())
+                .map(item -> new TrustAnchor(item, null))
                 .collect(Collectors.toSet()));
     }
 }

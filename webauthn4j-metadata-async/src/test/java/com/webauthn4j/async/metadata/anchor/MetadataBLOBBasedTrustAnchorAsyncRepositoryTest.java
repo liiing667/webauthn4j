@@ -1,8 +1,20 @@
 package com.webauthn4j.async.metadata.anchor;
 
 import com.webauthn4j.async.metadata.LocalFileMetadataBLOBAsyncProvider;
+import com.webauthn4j.async.metadata.MetadataBLOBAsyncProvider;
 import com.webauthn4j.converter.util.ObjectConverter;
 import com.webauthn4j.data.attestation.authenticator.AAGUID;
+import com.webauthn4j.data.jws.JWAIdentifier;
+import com.webauthn4j.data.jws.JWS;
+import com.webauthn4j.data.jws.JWSFactory;
+import com.webauthn4j.data.jws.JWSHeader;
+import com.webauthn4j.metadata.MetadataCodecFallbackRegistrar;
+import com.webauthn4j.metadata.data.MetadataBLOB;
+import com.webauthn4j.metadata.data.MetadataBLOBPayload;
+import com.webauthn4j.metadata.data.MetadataBLOBPayloadEntry;
+import com.webauthn4j.metadata.data.statement.MetadataStatement;
+import com.webauthn4j.metadata.data.toc.AuthenticatorStatus;
+import com.webauthn4j.metadata.data.toc.StatusReport;
 import com.webauthn4j.test.TestDataUtil;
 import com.webauthn4j.util.HexUtil;
 import com.webauthn4j.verifier.RegistrationObject;
@@ -11,16 +23,25 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.cert.TrustAnchor;
+import java.time.LocalDate;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class MetadataBLOBBasedTrustAnchorAsyncRepositoryTest {
+
+    private static final byte[] U2F_KEY_IDENTIFIER = HexUtil.decode("7c0903708b87115b0b422def3138c3c864e44573");
 
     @TempDir
     Path tempDir;
@@ -35,8 +56,40 @@ class MetadataBLOBBasedTrustAnchorAsyncRepositoryTest {
     @Test
     void find_by_attestationCertificateIdentifier_test() throws ExecutionException, InterruptedException {
         MetadataBLOBBasedTrustAnchorAsyncRepository target = createWithBlob("src/test/resources/integration/component/blob.jwt");
-        Set<TrustAnchor> trustAnchors = target.find(HexUtil.decode("2fea8f357c7a54a57f45cda72fafb34d1d449fd4")).toCompletableFuture().get();
+        Set<TrustAnchor> trustAnchors = target.find(HexUtil.decode("31116a647069d1493f58fc5b54e5449e2a52d43e")).toCompletableFuture().get();
         assertThat(trustAnchors).isNotEmpty();
+    }
+
+    @Test
+    void find_by_attestationCertificateIdentifier_filters_revoked_entry_test() throws ExecutionException, InterruptedException {
+        MetadataBLOBBasedTrustAnchorAsyncRepository target = new MetadataBLOBBasedTrustAnchorAsyncRepository(createProvider(AuthenticatorStatus.REVOKED));
+        assertThat(target.find(U2F_KEY_IDENTIFIER).toCompletableFuture().get()).isEmpty();
+    }
+
+    @Test
+    void find_by_attestationCertificateIdentifier_filters_attestation_key_compromise_entry_test() throws ExecutionException, InterruptedException {
+        MetadataBLOBBasedTrustAnchorAsyncRepository target = new MetadataBLOBBasedTrustAnchorAsyncRepository(createProvider(AuthenticatorStatus.ATTESTATION_KEY_COMPROMISE));
+        assertThat(target.find(U2F_KEY_IDENTIFIER).toCompletableFuture().get()).isEmpty();
+    }
+
+    @Test
+    void find_by_attestationCertificateIdentifier_filters_mixed_status_reports_test() throws ExecutionException, InterruptedException {
+        MetadataBLOBBasedTrustAnchorAsyncRepository target = new MetadataBLOBBasedTrustAnchorAsyncRepository(createProvider(AuthenticatorStatus.FIDO_CERTIFIED, AuthenticatorStatus.REVOKED));
+        assertThat(target.find(U2F_KEY_IDENTIFIER).toCompletableFuture().get()).isEmpty();
+    }
+
+    @Test
+    void find_by_attestationCertificateIdentifier_fails_closed_on_conflicting_sources_test() throws ExecutionException, InterruptedException {
+        MetadataBLOBAsyncProvider revokedProvider = createProvider(AuthenticatorStatus.REVOKED);
+        MetadataBLOBAsyncProvider certifiedProvider = createProvider(AuthenticatorStatus.FIDO_CERTIFIED);
+        MetadataBLOBBasedTrustAnchorAsyncRepository target = new MetadataBLOBBasedTrustAnchorAsyncRepository(revokedProvider, certifiedProvider);
+        assertThat(target.find(U2F_KEY_IDENTIFIER).toCompletableFuture().get()).isEmpty();
+    }
+
+    @Test
+    void find_by_attestationCertificateIdentifier_returns_certified_entry_test() throws ExecutionException, InterruptedException {
+        MetadataBLOBBasedTrustAnchorAsyncRepository target = new MetadataBLOBBasedTrustAnchorAsyncRepository(createProvider(AuthenticatorStatus.FIDO_CERTIFIED));
+        assertThat(target.find(U2F_KEY_IDENTIFIER).toCompletableFuture().get()).isNotEmpty();
     }
 
     @Test
@@ -94,5 +147,35 @@ class MetadataBLOBBasedTrustAnchorAsyncRepositoryTest {
         }
     }
 
+    private MetadataBLOBAsyncProvider createProvider(AuthenticatorStatus... statuses) {
+        ObjectConverter objectConverter = MetadataCodecFallbackRegistrar.registerFallbackMetadataCodecsIfNeeded(new ObjectConverter());
+        MetadataStatement metadataStatement = loadU2FMetadataStatement(objectConverter);
+        List<StatusReport> statusReports = Arrays.stream(statuses)
+                .map(status -> new StatusReport(status, null, null, null, null, null, null, null, null, null, null, null, null, null))
+                .collect(Collectors.toList());
+        MetadataBLOBPayloadEntry entry = new MetadataBLOBPayloadEntry(
+                null,
+                null,
+                metadataStatement.getAttestationCertificateKeyIdentifiers(),
+                metadataStatement,
+                null,
+                statusReports,
+                LocalDate.now(),
+                null,
+                null);
+        MetadataBLOBPayload payload = new MetadataBLOBPayload("", 0, LocalDate.now().plusDays(1), Collections.singletonList(entry));
+        JWSFactory jwsFactory = new JWSFactory(objectConverter);
+        JWS<MetadataBLOBPayload> jws = jwsFactory.create(new JWSHeader(JWAIdentifier.ES256, null), payload, new byte[32]);
+        MetadataBLOB metadataBLOB = new MetadataBLOB(jws);
+        return () -> CompletableFuture.completedFuture(metadataBLOB);
+    }
+
+    private MetadataStatement loadU2FMetadataStatement(ObjectConverter objectConverter) {
+        try (InputStream inputStream = Files.newInputStream(new File("src/test/resources/com/webauthn4j/async/metadata/JsonMetadataItem_u2f.json").toPath())) {
+            return objectConverter.getJsonMapper().readValue(inputStream, MetadataStatement.class);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
 
 }

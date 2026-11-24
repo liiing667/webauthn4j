@@ -24,6 +24,7 @@ import com.webauthn4j.metadata.util.internal.MetadataStatementUtil;
 import com.webauthn4j.util.HexUtil;
 
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -42,20 +43,34 @@ public class MetadataBLOBBasedMetadataStatementRepository implements MetadataSta
 
     @Override
     public Set<MetadataStatement> find(AAGUID aaguid) {
-        return metadataBLOBProviders.stream()
+        List<MetadataBLOBPayloadEntry> entries = metadataBLOBProviders.stream()
                 .flatMap(provider -> provider.provide().getPayload().getEntries().stream())
                 .filter(entry -> Objects.equals(entry.getAaguid(), aaguid))
-                .filter(entry -> MetadataBLOBUtil.checkMetadataBLOBPayloadEntry(entry, notFidoCertifiedAllowed, selfAssertionSubmittedAllowed))
-                .map(MetadataBLOBPayloadEntry::getMetadataStatement)
-                .filter(MetadataStatementUtil::checkSurrogateMetadataStatementAttestationRootCertificate)
-                .collect(Collectors.toSet());
+                .collect(Collectors.toList());
+        return toMetadataStatements(entries);
     }
 
     @Override
     public Set<MetadataStatement> find(byte[] attestationCertificateKeyIdentifier) {
-        return metadataBLOBProviders.stream()
+        List<MetadataBLOBPayloadEntry> entries = metadataBLOBProviders.stream()
                 .flatMap(provider -> provider.provide().getPayload().getEntries().stream())
                 .filter(entry -> matchAttestationCertificateKeyIdentifier(entry, attestationCertificateKeyIdentifier))
+                .collect(Collectors.toList());
+        return toMetadataStatements(entries);
+    }
+
+    private Set<MetadataStatement> toMetadataStatements(List<MetadataBLOBPayloadEntry> entries) {
+        // Status reports are checked for every matching entry, regardless of whether the entry was
+        // located by AAGUID or by attestation certificate key identifier, so both lookup methods
+        // reach the same security conclusion. If multiple sources provide conflicting entries for
+        // the same authenticator, the lookup fails closed: a single revoked, compromised or
+        // otherwise unacceptable entry invalidates all matching entries.
+        boolean allEntriesAcceptable = entries.stream()
+                .allMatch(entry -> MetadataBLOBUtil.checkMetadataBLOBPayloadEntry(entry, notFidoCertifiedAllowed, selfAssertionSubmittedAllowed));
+        if (!allEntriesAcceptable) {
+            return Collections.emptySet();
+        }
+        return entries.stream()
                 .map(MetadataBLOBPayloadEntry::getMetadataStatement)
                 .filter(MetadataStatementUtil::checkSurrogateMetadataStatementAttestationRootCertificate)
                 .collect(Collectors.toSet());

@@ -7,6 +7,7 @@ import com.webauthn4j.metadata.util.internal.MetadataBLOBUtil;
 import com.webauthn4j.metadata.util.internal.MetadataStatementUtil;
 
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -30,30 +31,43 @@ public class MetadataBLOBBasedMetadataStatementAsyncRepository implements Metada
 
     @Override
     public CompletionStage<Set<MetadataStatement>> find(AAGUID aaguid) {
-        return metadataBLOBAsyncProviders.stream()
-                .map(provider -> provider.provide().thenApply(metadataBLOB -> metadataBLOB.getPayload().getEntries().stream()))
-                .reduce(CompletableFuture.completedFuture(Stream.empty()),
-                        (a, b)-> a.thenCombine(b, Stream::concat)
-                ).thenApply(entries ->
-                        entries
+        return collectEntries()
+                .thenApply(entries -> entries
                         .filter(entry -> Objects.equals(entry.getAaguid(), aaguid))
-                        .filter(entry -> MetadataBLOBUtil.checkMetadataBLOBPayloadEntry(entry, notFidoCertifiedAllowed, selfAssertionSubmittedAllowed))
-                        .map(MetadataBLOBPayloadEntry::getMetadataStatement)
-                        .filter(MetadataStatementUtil::checkSurrogateMetadataStatementAttestationRootCertificate)
-                        .collect(Collectors.toSet())
-                );
+                        .collect(Collectors.toList()))
+                .thenApply(this::toMetadataStatements);
     }
 
     @Override
     public CompletionStage<Set<MetadataStatement>> find(byte[] attestationCertificateKeyIdentifier) {
-        return metadataBLOBAsyncProviders.stream()
-                .map(provider -> provider.provide().thenApply(metadataBLOB -> metadataBLOB.getPayload().getEntries().stream()))
-                .reduce(CompletableFuture.completedFuture(Stream.empty()), (a, b)-> a.thenCombine(b, Stream::concat))
+        return collectEntries()
                 .thenApply(entries -> entries
                         .filter(entry -> matchAttestationCertificateKeyIdentifier(entry, attestationCertificateKeyIdentifier))
-                        .map(MetadataBLOBPayloadEntry::getMetadataStatement)
-                        .filter(MetadataStatementUtil::checkSurrogateMetadataStatementAttestationRootCertificate)
-                        .collect(Collectors.toSet()));
+                        .collect(Collectors.toList()))
+                .thenApply(this::toMetadataStatements);
+    }
+
+    private CompletionStage<Stream<MetadataBLOBPayloadEntry>> collectEntries() {
+        return metadataBLOBAsyncProviders.stream()
+                .map(provider -> provider.provide().thenApply(metadataBLOB -> metadataBLOB.getPayload().getEntries().stream()))
+                .reduce(CompletableFuture.completedFuture(Stream.empty()), (a, b)-> a.thenCombine(b, Stream::concat));
+    }
+
+    private Set<MetadataStatement> toMetadataStatements(List<MetadataBLOBPayloadEntry> entries) {
+        // Status reports are checked for every matching entry, regardless of whether the entry was
+        // located by AAGUID or by attestation certificate key identifier, so both lookup methods
+        // reach the same security conclusion. If multiple sources provide conflicting entries for
+        // the same authenticator, the lookup fails closed: a single revoked, compromised or
+        // otherwise unacceptable entry invalidates all matching entries.
+        boolean allEntriesAcceptable = entries.stream()
+                .allMatch(entry -> MetadataBLOBUtil.checkMetadataBLOBPayloadEntry(entry, notFidoCertifiedAllowed, selfAssertionSubmittedAllowed));
+        if (!allEntriesAcceptable) {
+            return Collections.emptySet();
+        }
+        return entries.stream()
+                .map(MetadataBLOBPayloadEntry::getMetadataStatement)
+                .filter(MetadataStatementUtil::checkSurrogateMetadataStatementAttestationRootCertificate)
+                .collect(Collectors.toSet());
     }
 
     public boolean isNotFidoCertifiedAllowed() {
