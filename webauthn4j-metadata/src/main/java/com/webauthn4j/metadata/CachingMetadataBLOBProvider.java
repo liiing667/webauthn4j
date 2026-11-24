@@ -21,6 +21,7 @@ import org.jetbrains.annotations.NotNull;
 
 import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.util.Objects;
 
 public abstract class CachingMetadataBLOBProvider implements MetadataBLOBProvider {
 
@@ -31,24 +32,59 @@ public abstract class CachingMetadataBLOBProvider implements MetadataBLOBProvide
     @Override
     public @NotNull MetadataBLOB provide(){
         synchronized (cachedMetadataBLOBLock){
+            LocalDate today = LocalDate.now(ZoneOffset.UTC);
             if(cachedMetadataBLOB == null){
                 refresh();
             }
+            else {
+                LocalDate nextUpdate = cachedMetadataBLOB.getPayload().getNextUpdate();
+                if((nextUpdate.isBefore(today) || nextUpdate.isEqual(today)) && cachedMetadataBLOBLastUpdate.isBefore(today)){
+                    try {
+                        refresh();
+                    }
+                    catch (RuntimeException ignored) {
+                        // Keep serving the last complete generation when refresh fails.
+                        // The next provide() call will retry the refresh.
+                    }
+                }
+            }
+            return cachedMetadataBLOB;
         }
-        LocalDate today = LocalDate.now(ZoneOffset.UTC);
-        LocalDate nextUpdate = cachedMetadataBLOB.getPayload().getNextUpdate();
-        if((nextUpdate.isBefore(today) || nextUpdate.isEqual(today)) && cachedMetadataBLOBLastUpdate.isBefore(today)){
-            refresh();
-        }
-
-        return cachedMetadataBLOB;
     }
 
     public void refresh(){
         synchronized (cachedMetadataBLOBLock){
-            cachedMetadataBLOB = doProvide();
-            cachedMetadataBLOBLastUpdate = LocalDate.now(ZoneOffset.UTC);
+            doRefresh(LocalDate.now(ZoneOffset.UTC));
         }
+    }
+
+    private void doRefresh(@NotNull LocalDate today){
+        MetadataBLOB candidate = doProvide();
+        if(isAcceptable(candidate)){
+            cachedMetadataBLOB = candidate;
+        }
+        // Record the attempt even when an older BLOB is rejected so that it is not
+        // fetched repeatedly on the same day. The previously cached BLOB is kept.
+        cachedMetadataBLOBLastUpdate = today;
+    }
+
+    private boolean isAcceptable(@NotNull MetadataBLOB candidate){
+        if(cachedMetadataBLOB == null){
+            return true;
+        }
+        Integer candidateNo = candidate.getPayload().getNo();
+        Integer cachedNo = cachedMetadataBLOB.getPayload().getNo();
+        if(candidateNo == null || cachedNo == null){
+            return Objects.equals(candidate.getPayload(), cachedMetadataBLOB.getPayload());
+        }
+        if(candidateNo > cachedNo){
+            return true;
+        }
+        // A re-published BLOB with the same generation is accepted only when it is
+        // equivalent to the cached one. Otherwise it could replace trust material
+        // without advancing the generation.
+        return candidateNo.equals(cachedNo)
+                && Objects.equals(candidate.getPayload(), cachedMetadataBLOB.getPayload());
     }
 
     protected abstract @NotNull MetadataBLOB doProvide();

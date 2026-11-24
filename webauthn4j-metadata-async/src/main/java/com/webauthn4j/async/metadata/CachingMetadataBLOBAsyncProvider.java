@@ -23,6 +23,7 @@ import org.jetbrains.annotations.Nullable;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.atomic.AtomicReference;
@@ -65,18 +66,19 @@ public abstract class CachingMetadataBLOBAsyncProvider implements MetadataBLOBAs
                 }
                 catch (Throwable e) {
                     inFlight.compareAndSet(future, null);
-                    future.completeExceptionally(e);
+                    completeExceptionallyOrWithPrevious(future, e);
                     return future;
                 }
                 stage.whenComplete((metadataBLOB, e) -> {
                     if (e != null) {
                         inFlight.compareAndSet(future, null);
-                        future.completeExceptionally(e);
+                        completeExceptionallyOrWithPrevious(future, e);
                     }
                     else {
-                        cache = new CacheState(metadataBLOB, LocalDate.now(clock));
+                        CacheState updated = applyUpdate(cache, metadataBLOB, LocalDate.now(clock));
+                        cache = updated;
                         inFlight.compareAndSet(future, null);
-                        future.complete(metadataBLOB);
+                        future.complete(updated.blob);
                     }
                 });
                 return future;
@@ -93,6 +95,43 @@ public abstract class CachingMetadataBLOBAsyncProvider implements MetadataBLOBAs
         LocalDate today = LocalDate.now(clock);
         LocalDate nextUpdate = cache.blob.getPayload().getNextUpdate();
         return (nextUpdate.isBefore(today) || nextUpdate.isEqual(today)) && cache.lastUpdate.isBefore(today);
+    }
+
+    private void completeExceptionallyOrWithPrevious(@NotNull CompletableFuture<MetadataBLOB> future, @NotNull Throwable e) {
+        CacheState current = cache;
+        if(current != null){
+            // Keep serving the last complete generation when refresh fails.
+            // The next provide() call will retry the refresh.
+            future.complete(current.blob);
+        }
+        else {
+            future.completeExceptionally(e);
+        }
+    }
+
+    static @NotNull CacheState applyUpdate(@Nullable CacheState current, @NotNull MetadataBLOB candidate, @NotNull LocalDate today) {
+        if(current == null || isAcceptable(current.blob, candidate)){
+            return new CacheState(candidate, today);
+        }
+        // Keep the previously published generation. Recording the attempt prevents
+        // the same older BLOB from being fetched repeatedly on the same day.
+        return new CacheState(current.blob, today);
+    }
+
+    private static boolean isAcceptable(@NotNull MetadataBLOB cached, @NotNull MetadataBLOB candidate) {
+        Integer candidateNo = candidate.getPayload().getNo();
+        Integer cachedNo = cached.getPayload().getNo();
+        if(candidateNo == null || cachedNo == null){
+            return Objects.equals(candidate.getPayload(), cached.getPayload());
+        }
+        if(candidateNo > cachedNo){
+            return true;
+        }
+        // A re-published BLOB with the same generation is accepted only when it is
+        // equivalent to the cached one. Otherwise it could replace trust material
+        // without advancing the generation.
+        return candidateNo.equals(cachedNo)
+                && Objects.equals(candidate.getPayload(), cached.getPayload());
     }
 
     static class CacheState {

@@ -201,6 +201,121 @@ class CachingMetadataBLOBAsyncProviderTest {
         assertThat(callCount).hasValue(2);
     }
 
+    @Test
+    void older_metadata_blob_is_rejected_test() throws Exception {
+        LocalDate nextUpdate = LocalDate.of(2020, Month.JANUARY, 2);
+        MetadataBLOB latest = createMetadataBLOB(7, nextUpdate);
+        MetadataBLOB older = createMetadataBLOB(6, nextUpdate);
+        AtomicReference<Clock> clockRef = new AtomicReference<>();
+        AtomicInteger callCount = new AtomicInteger(0);
+        CachingMetadataBLOBAsyncProvider target = new CachingMetadataBLOBAsyncProvider(new DelegateClock(clockRef)) {
+            @Override
+            protected @NotNull CompletionStage<MetadataBLOB> doProvide() {
+                return CompletableFuture.completedFuture(callCount.incrementAndGet() == 1 ? latest : older);
+            }
+        };
+
+        clockRef.set(fixedClock(2020, Month.JANUARY, 1));
+        assertThat(target.provide().toCompletableFuture().get(1, TimeUnit.SECONDS)).isSameAs(latest);
+
+        clockRef.set(fixedClock(2020, Month.JANUARY, 2));
+        assertThat(target.provide().toCompletableFuture().get(1, TimeUnit.SECONDS)).isSameAs(latest);
+        assertThat(callCount).hasValue(2);
+    }
+
+    @Test
+    void equivalent_metadata_blob_with_same_no_is_accepted_test() throws Exception {
+        LocalDate nextUpdate = LocalDate.of(2020, Month.JANUARY, 2);
+        MetadataBLOB first = createMetadataBLOB(7, nextUpdate);
+        MetadataBLOB republished = createMetadataBLOB(7, nextUpdate);
+        AtomicReference<Clock> clockRef = new AtomicReference<>();
+        AtomicInteger callCount = new AtomicInteger(0);
+        CachingMetadataBLOBAsyncProvider target = new CachingMetadataBLOBAsyncProvider(new DelegateClock(clockRef)) {
+            @Override
+            protected @NotNull CompletionStage<MetadataBLOB> doProvide() {
+                return CompletableFuture.completedFuture(callCount.incrementAndGet() == 1 ? first : republished);
+            }
+        };
+
+        clockRef.set(fixedClock(2020, Month.JANUARY, 1));
+        target.provide().toCompletableFuture().get(1, TimeUnit.SECONDS);
+
+        clockRef.set(fixedClock(2020, Month.JANUARY, 2));
+        assertThat(target.provide().toCompletableFuture().get(1, TimeUnit.SECONDS)).isSameAs(republished);
+    }
+
+    @Test
+    void non_equivalent_metadata_blob_with_same_no_is_rejected_test() throws Exception {
+        LocalDate nextUpdate = LocalDate.of(2020, Month.JANUARY, 2);
+        MetadataBLOB first = createMetadataBLOB(7, nextUpdate);
+        MetadataBLOB conflicting = createMetadataBLOB(7, LocalDate.of(2020, Month.JANUARY, 3));
+        AtomicReference<Clock> clockRef = new AtomicReference<>();
+        AtomicInteger callCount = new AtomicInteger(0);
+        CachingMetadataBLOBAsyncProvider target = new CachingMetadataBLOBAsyncProvider(new DelegateClock(clockRef)) {
+            @Override
+            protected @NotNull CompletionStage<MetadataBLOB> doProvide() {
+                return CompletableFuture.completedFuture(callCount.incrementAndGet() == 1 ? first : conflicting);
+            }
+        };
+
+        clockRef.set(fixedClock(2020, Month.JANUARY, 1));
+        target.provide().toCompletableFuture().get(1, TimeUnit.SECONDS);
+
+        clockRef.set(fixedClock(2020, Month.JANUARY, 2));
+        assertThat(target.provide().toCompletableFuture().get(1, TimeUnit.SECONDS)).isSameAs(first);
+    }
+
+    @Test
+    void newer_metadata_blob_is_accepted_test() throws Exception {
+        LocalDate nextUpdate = LocalDate.of(2020, Month.JANUARY, 2);
+        MetadataBLOB older = createMetadataBLOB(7, nextUpdate);
+        MetadataBLOB newer = createMetadataBLOB(8, nextUpdate);
+        AtomicReference<Clock> clockRef = new AtomicReference<>();
+        AtomicInteger callCount = new AtomicInteger(0);
+        CachingMetadataBLOBAsyncProvider target = new CachingMetadataBLOBAsyncProvider(new DelegateClock(clockRef)) {
+            @Override
+            protected @NotNull CompletionStage<MetadataBLOB> doProvide() {
+                return CompletableFuture.completedFuture(callCount.incrementAndGet() == 1 ? older : newer);
+            }
+        };
+
+        clockRef.set(fixedClock(2020, Month.JANUARY, 1));
+        target.provide().toCompletableFuture().get(1, TimeUnit.SECONDS);
+
+        clockRef.set(fixedClock(2020, Month.JANUARY, 2));
+        assertThat(target.provide().toCompletableFuture().get(1, TimeUnit.SECONDS)).isSameAs(newer);
+    }
+
+    @Test
+    void refresh_failure_keeps_previous_metadata_blob_test() throws Exception {
+        LocalDate nextUpdate = LocalDate.of(2020, Month.JANUARY, 2);
+        MetadataBLOB cached = createMetadataBLOB(7, nextUpdate);
+        MetadataBLOB older = createMetadataBLOB(6, nextUpdate);
+        AtomicReference<Clock> clockRef = new AtomicReference<>();
+        AtomicInteger callCount = new AtomicInteger(0);
+        CachingMetadataBLOBAsyncProvider target = new CachingMetadataBLOBAsyncProvider(new DelegateClock(clockRef)) {
+            @Override
+            protected @NotNull CompletionStage<MetadataBLOB> doProvide() {
+                int count = callCount.incrementAndGet();
+                if (count == 1) {
+                    return CompletableFuture.completedFuture(cached);
+                }
+                if (count == 2) {
+                    return CompletableFuture.failedFuture(new RuntimeException("network error"));
+                }
+                return CompletableFuture.completedFuture(older);
+            }
+        };
+
+        clockRef.set(fixedClock(2020, Month.JANUARY, 1));
+        assertThat(target.provide().toCompletableFuture().get(1, TimeUnit.SECONDS)).isSameAs(cached);
+
+        clockRef.set(fixedClock(2020, Month.JANUARY, 2));
+        assertThat(target.provide().toCompletableFuture().get(1, TimeUnit.SECONDS)).isSameAs(cached);
+        assertThat(target.provide().toCompletableFuture().get(1, TimeUnit.SECONDS)).isSameAs(cached);
+        assertThat(callCount).hasValue(3);
+    }
+
 
     private static Clock fixedClock(int year, Month month, int day) {
         LocalDate date = LocalDate.of(year, month, day);
@@ -208,9 +323,13 @@ class CachingMetadataBLOBAsyncProviderTest {
     }
 
     private MetadataBLOB createMetadataBLOB(LocalDate nextUpdate){
+        return createMetadataBLOB(0, nextUpdate);
+    }
+
+    private MetadataBLOB createMetadataBLOB(int no, LocalDate nextUpdate){
         JWSFactory factory = new JWSFactory(new ObjectConverter());
         JWSHeader header = new JWSHeader(JWAIdentifier.ES256, null);
-        MetadataBLOBPayload payload = new MetadataBLOBPayload("", 0, nextUpdate, Collections.emptyList());
+        MetadataBLOBPayload payload = new MetadataBLOBPayload("", no, nextUpdate, Collections.emptyList());
         JWS<MetadataBLOBPayload> jws = factory.create(header, payload, new byte[32]);
         return new MetadataBLOB(jws);
     }
