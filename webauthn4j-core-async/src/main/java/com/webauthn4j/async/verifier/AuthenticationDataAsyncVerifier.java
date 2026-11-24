@@ -66,6 +66,128 @@ public class AuthenticationDataAsyncVerifier {
         }
     }
 
+    private static final class AuthenticationStateSnapshot {
+
+        private final Authenticator authenticator;
+        private final long counter;
+        private final boolean coreCredentialRecord;
+        private final Boolean backedUp;
+        private final Boolean uvInitialized;
+
+        private AuthenticationStateSnapshot(Authenticator authenticator) {
+            this.authenticator = authenticator;
+            this.counter = authenticator.getCounter();
+            this.coreCredentialRecord = authenticator instanceof CoreCredentialRecord;
+            if (coreCredentialRecord) {
+                CoreCredentialRecord record = (CoreCredentialRecord) authenticator;
+                this.backedUp = record.isBackedUp();
+                this.uvInitialized = record.isUvInitialized();
+            }
+            else {
+                this.backedUp = null;
+                this.uvInitialized = null;
+            }
+        }
+
+        private void restore() {
+            authenticator.setCounter(counter);
+            if (coreCredentialRecord) {
+                CoreCredentialRecord record = (CoreCredentialRecord) authenticator;
+                if (backedUp != null) {
+                    record.setBackedUp(backedUp);
+                }
+                if (uvInitialized != null) {
+                    record.setUvInitialized(uvInitialized);
+                }
+            }
+        }
+    }
+
+    /**
+     * A future that ties cancellation and the final credential record update to the same commit boundary.
+     * The credential record is updated only when the verification has completed successfully and the
+     * caller has not cancelled the returned future. A late result arriving after cancellation is ignored.
+     */
+    private static final class AuthenticationCommitFuture extends CompletableFuture<AuthenticationData> {
+
+        private final Object lock = new Object();
+
+        private CompletableFuture<?> upstream;
+        private boolean sealed;
+        private boolean cancelRequested;
+
+        @Override
+        public boolean cancel(boolean mayInterruptIfRunning) {
+            CompletableFuture<?> upstreamToCancel;
+            synchronized (lock) {
+                if (isDone() || sealed) {
+                    return false;
+                }
+                sealed = true;
+                cancelRequested = true;
+                boolean cancelled = super.cancel(mayInterruptIfRunning);
+                if (!cancelled) {
+                    sealed = false;
+                    cancelRequested = false;
+                    return false;
+                }
+                upstreamToCancel = upstream;
+            }
+            if (upstreamToCancel != null) {
+                upstreamToCancel.cancel(mayInterruptIfRunning);
+            }
+            return true;
+        }
+
+        private void setUpstream(CompletableFuture<?> upstream) {
+            boolean cancelNow;
+            synchronized (lock) {
+                this.upstream = upstream;
+                cancelNow = cancelRequested;
+            }
+            if (cancelNow) {
+                upstream.cancel(false);
+            }
+        }
+
+        private void fail(Throwable throwable) {
+            synchronized (lock) {
+                if (sealed || isDone()) {
+                    return;
+                }
+                sealed = true;
+            }
+            super.completeExceptionally(throwable);
+        }
+
+        private void commit(Authenticator authenticator, AuthenticatorData<AuthenticationExtensionAuthenticatorOutput> authenticatorData, AuthenticationData result) {
+            Throwable failure = null;
+            synchronized (lock) {
+                if (sealed || isDone()) {
+                    return;
+                }
+                sealed = true;
+                //spec| Step26
+                //spec| Update credentialRecord with new state values only after every async verification,
+                //spec| including custom verifiers, has been accepted and the caller has not cancelled the operation.
+                AuthenticationStateSnapshot snapshot = new AuthenticationStateSnapshot(authenticator);
+                try {
+                    updateRecord(authenticator, authenticatorData);
+                }
+                catch (Throwable throwable) {
+                    snapshot.restore();
+                    failure = throwable;
+                }
+            }
+            if (failure == null) {
+                super.complete(result);
+            }
+            else {
+                super.completeExceptionally(failure);
+            }
+        }
+    }
+
     private class AuthenticationDataVerification{
 
         private final AuthenticationData authenticationData;
@@ -83,12 +205,24 @@ public class AuthenticationDataAsyncVerifier {
         }
 
         public CompletionStage<AuthenticationData> execute(){
-            return execStep1toStep14()
+            CompletableFuture<Void> verificationFuture = execStep1toStep14()
                     .thenCompose(unused -> execStep15toStep20())
                     .thenCompose(unused -> execStep21())
                     .thenCompose(unused -> execStep22toStep24())
                     .thenCompose(unused -> execStep25toStep27())
-                    .thenApply(unused -> authenticationData);
+                    .toCompletableFuture();
+
+            AuthenticationCommitFuture commitFuture = new AuthenticationCommitFuture();
+            commitFuture.setUpstream(verificationFuture);
+            verificationFuture.whenComplete((unused, throwable) -> {
+                if (throwable != null) {
+                    commitFuture.fail(throwable);
+                }
+                else {
+                    commitFuture.commit(authenticationParameters.getAuthenticator(), authenticatorData, authenticationData);
+                }
+            });
+            return commitFuture;
         }
 
         private CompletionStage<Void> execStep1toStep14() {
@@ -293,19 +427,6 @@ public class AuthenticationDataAsyncVerifier {
             //spec| - Verify that attStmt is a correct attestation statement, conveying a valid attestation signature,
             //spec|   by using the attestation statement format fmt’s verification procedure given attStmt, authData and hash.
             //TODO: Since Step25 is removed in the latest Editor's draft(as of 2024-04-07, see https://github.com/w3c/webauthn/pull/1997), this step is left not implemented. This step need to be removed when the next draft is released.
-
-            //spec| Step26
-            //spec| Update credentialRecord with new state values:
-            //spec| - Update credentialRecord.signCount to the value of authData.signCount.
-            //spec| - Update credentialRecord.backupState to the value of currentBs.
-            //spec| - If credentialRecord.uvInitialized is false, update it to the value of the UV bit in the flags in authData. This change SHOULD require authorization by an additional authentication factor equivalent to WebAuthn user verification; if not authorized, skip this step.
-            updateRecord(authenticationParameters.getAuthenticator(), authenticatorData);
-
-            //spec| - OPTIONALLY, if response.attestationObject is present, update credentialRecord.attestationObject to the value of response.attestationObject and update credentialRecord.attestationClientDataJSON to the value of response.clientDataJSON.
-            //TODO: Since this optional step is removed in the latest Editor's draft(as of 2024-04-07), this step is left not implemented. This step need to be removed when the next draft is released.
-
-            //spec| If the Relying Party performs additional security checks beyond these WebAuthn authentication ceremony steps, the above state updates SHOULD be deferred to after those additional checks are completed successfully.
-            //      (This step is out of WebAuthn4J scope. It's caller's responsibility.)
 
             CompletableFuture<Void> completableFuture = CompletableFuture.completedFuture(null);
             for (CustomAuthenticationAsyncVerifier customAuthenticationAsyncVerifier : customAuthenticationAsyncVerifiers) {
